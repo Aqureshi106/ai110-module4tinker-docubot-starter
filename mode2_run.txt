@@ -1,0 +1,2449 @@
+﻿DocuBot Tinker Activity
+=======================
+
+Choose a mode:
+  1) Naive LLM over full docs (no retrieval)
+  2) Retrieval only (no LLM)
+  3) RAG (retrieval + LLM)
+  q) Quit
+Enter choice: 
+Press Enter to run built in sample queries.
+Or type a single custom query: 
+Running retrieval only mode on sample queries...
+
+============================================================
+Question: Where is the auth token generated?
+
+Retrieved snippets:
+[AUTH.md]
+# Authentication Guide
+
+This document explains how authentication works in the sample application. It covers token generation, required environment variables, and the expected client workflow.
+
+## Overview
+
+The application uses a simple token based system. Every request to a protected endpoint must include a valid access token in the Authorization header. Tokens are short lived and tied to a single user.
+
+## Token Generation
+
+Tokens are created by the `generate_access_token` function in the `auth_utils.py` module. The function takes a user ID and returns a signed JSON Web Token string.
+
+Internally, the token is signed using the secret stored in the `AUTH_SECRET_KEY` environment variable. If the key is missing or empty, token creation will fail.
+
+The token payload includes:
+
+- `user_id`
+- `issued_at`
+- `expires_at`
+- `permissions` (optional)
+
+## Validating Requests
+
+Requests are validated by the `require_auth` decorator. This decorator ensures that:
+
+1. A token is present in the Authorization header  
+2. The token signature is valid  
+3. The token has not expired  
+4. The user has permission to access the requested resource  
+
+If validation fails, the client receives a 401 Unauthorized response.
+
+## Environment Variables
+
+The authentication system depends on two variables:
+
+- `AUTH_SECRET_KEY`  
+  A secret string used to sign all access tokens. Must be long and unpredictable.
+
+- `TOKEN_LIFETIME_SECONDS`  
+  Controls how long a generated token remains valid. Defaults to 3600 seconds if not set.
+
+Both variables must be configured before starting the server.
+
+## Client Workflow
+
+A typical client follows this sequence:
+
+1. Send credentials to `/api/login`
+2. Receive an access token in the response
+3. Include the token in the Authorization header for all subsequent requests:
+
+    ```plaintext
+    Authorization: Bearer <token>
+    ```
+
+4. Refresh the token when it expires by calling `/api/refresh`
+
+Clients should never store tokens in URL query parameters.
+
+## Common Failure Cases
+
+- Token signed with a stale or rotated key  
+- Clock skew causing premature expiration  
+- Missing Authorization header  
+- Incorrect token format (extra whitespace or missing Bearer prefix)
+
+If unexpected authentication failures occur, rotate the secret key and instruct users to log in again.
+
+
+---
+[API_REFERENCE.md]
+# API Reference
+
+This document lists the main API endpoints available in the sample application. It describes each route's purpose, required parameters, and expected responses. All protected endpoints require a valid access token.
+
+## Base URL
+
+    ```plaintext
+    /api
+    ````
+
+## Authentication Endpoints
+
+### POST /api/login
+
+Authenticates a user and returns a short lived access token.
+
+Request Body:
+
+    ```json
+    {
+    "username": "example",
+    "password": "secret"
+    }
+    ````
+
+Successful Response:
+
+    ```json
+    {
+    "access_token": "<token>"
+    }
+    ```
+
+Notes:
+
+* Returns 401 if credentials are invalid.
+* The token must be included in the Authorization header for protected endpoints.
+
+### POST /api/refresh
+
+Exchanges an existing valid token for a new one with an updated expiration time.
+
+Headers:
+
+    ```plaintext
+    Authorization: Bearer <token>
+    ```
+
+Response:
+
+    ```json
+    {
+    "access_token": "<new_token>"
+    }
+    ```
+
+## User Data Endpoints
+
+### GET /api/users/<user_id>
+
+Fetches profile data for a specific user.
+
+Headers:
+
+    ```plaintext
+    Authorization: Bearer <token>
+    ```
+
+Response Example:
+
+    ```json
+    {
+    "user_id": 42,
+    "email": "user@example.com",
+    "joined_at": "2024-01-15T10:22:00Z"
+    }
+    ```
+
+Failure Cases:
+
+* 401 if the token is missing or expired
+* 403 if the user lacks permission to view this profile
+* 404 if no user exists with the given ID
+
+### GET /api/users
+
+Returns a list of all users. Only accessible to admins.
+
+Headers:
+
+    ```plaintext
+    Authorization: Bearer <token>
+    ```
+
+Successful Response:
+
+    ```json
+    [
+    {
+        "user_id": 1,
+        "email": "admin@example.com"
+    },
+    {
+        "user_id": 2,
+        "email": "guest@example.com"
+    }
+    ]
+    ```
+
+Notes:
+
+* Returns 403 for non admin accounts.
+
+## Project Data Endpoints
+
+### GET /api/projects
+
+Returns all projects visible to the calling user.
+
+Headers:
+
+    ```plaintext
+    Authorization: Bearer <token>
+    ```
+
+Response Example:
+
+    ```json
+    [
+    {
+        "project_id": "alpha",
+        "name": "Alpha Project",
+        "status": "active"
+    }
+    ]
+    ```
+
+### GET /api/projects/<project_id>
+
+Fetches detailed information for a single project.
+
+Headers:
+
+    ```plaintext
+    Authorization: Bearer <token>
+    ```
+
+Response Example:
+
+    ```json
+    {
+    "project_id": "alpha",
+    "name": "Alpha Project",
+    "description": "Internal research initiative.",
+    "status": "active",
+    "owner": 1
+    }
+    ```
+
+Failure Cases:
+
+* 401 for missing token
+* 403 if caller cannot access the project
+* 404 if the project does not exist
+
+## Error Formats
+
+All error responses follow this structure:
+
+    ```json
+    {
+    "error": "Description of the problem"
+    }
+    ```
+
+Common error messages include:
+
+* "Unauthorized"
+* "Forbidden"
+* "Not Found"
+* "Invalid Request"
+
+
+---
+[SETUP.md]
+# Setup Guide
+
+This document explains how to install, configure, and run the sample application. Follow these steps to prepare your environment, set required variables, and verify that everything is working correctly.
+
+## Requirements
+
+- Python 3.9 or later  
+- pip installed  
+- A terminal or command prompt  
+- Optional: a valid Gemini API key for LLM based features
+
+## 1. Install Dependencies
+
+From the project root, install dependencies using pip:
+
+    ```bash
+    pip install -r requirements.txt
+    ```
+
+This installs all required libraries, including the database driver and LLM client.
+
+## 2. Environment Variables
+
+Create a `.env` file or export the following variables directly in your shell.
+
+### Required Variables
+
+- `DATABASE_URL`  
+  Specifies where the application stores data. If omitted, the app uses a local SQLite database file.
+
+  Example:
+
+      ```plaintext
+      DATABASE_URL=sqlite:///app.db
+      ```
+
+- `AUTH_SECRET_KEY`  
+Used to sign authentication tokens. Must be a non empty string.
+
+    Example:
+
+        ```plaintext
+        AUTH_SECRET_KEY="supersecretvalue"
+        ```
+
+### Optional Variables
+
+- `TOKEN_LIFETIME_SECONDS`  
+Controls how long access tokens remain valid.
+
+- `GEMINI_API_KEY`  
+Enables LLM powered features such as enhanced documentation answers. Without this key, the application falls back to rule based behavior.
+
+## 3. Initialize the Database
+
+If using SQLite, the database file will be created automatically when the server runs. For PostgreSQL, ensure the database exists before starting the application:
+
+    ```plaintext
+    createdb appdb
+    ```
+
+You may also need to run migrations if schema changes are introduced.
+
+## 4. Running the Application
+
+To start the server:
+
+    ```plaintext
+    python app.py
+    ```
+
+By default, the server listens on:
+
+    ```plaintext
+    [http://localhost:5000](http://localhost:5000)
+    ```
+
+Once the server is running, you can test basic functionality by visiting the API endpoints or using a tool like curl or Postman.
+
+## 5. Using the Docs Assistant (DocuBot)
+
+If you have set `GEMINI_API_KEY`, you can run the documentation assistant:
+
+    ```plaintext
+    python main.py
+    ```
+
+This tool supports multiple modes including:
+
+- naive LLM generation  
+- retrieval only  
+- full RAG (retrieval plus generation)
+
+Each mode helps you explore different system behaviors.
+
+## 6. Troubleshooting
+
+- If authentication fails, confirm that `AUTH_SECRET_KEY` is set.  
+- If database queries return errors, verify the `DATABASE_URL` format.  
+- If LLM features do not work, ensure that `GEMINI_API_KEY` is defined in the environment.  
+- If installation fails, check that you are using a compatible Python version.
+
+## 7. Resetting the Environment
+
+To reset the local database (SQLite only):
+
+    ```plaintext
+    rm app.db
+    ```
+
+Then rerun the setup steps above.
+
+
+
+============================================================
+Question: What environment variables are required for authentication?
+
+Retrieved snippets:
+[SETUP.md]
+# Setup Guide
+
+This document explains how to install, configure, and run the sample application. Follow these steps to prepare your environment, set required variables, and verify that everything is working correctly.
+
+## Requirements
+
+- Python 3.9 or later  
+- pip installed  
+- A terminal or command prompt  
+- Optional: a valid Gemini API key for LLM based features
+
+## 1. Install Dependencies
+
+From the project root, install dependencies using pip:
+
+    ```bash
+    pip install -r requirements.txt
+    ```
+
+This installs all required libraries, including the database driver and LLM client.
+
+## 2. Environment Variables
+
+Create a `.env` file or export the following variables directly in your shell.
+
+### Required Variables
+
+- `DATABASE_URL`  
+  Specifies where the application stores data. If omitted, the app uses a local SQLite database file.
+
+  Example:
+
+      ```plaintext
+      DATABASE_URL=sqlite:///app.db
+      ```
+
+- `AUTH_SECRET_KEY`  
+Used to sign authentication tokens. Must be a non empty string.
+
+    Example:
+
+        ```plaintext
+        AUTH_SECRET_KEY="supersecretvalue"
+        ```
+
+### Optional Variables
+
+- `TOKEN_LIFETIME_SECONDS`  
+Controls how long access tokens remain valid.
+
+- `GEMINI_API_KEY`  
+Enables LLM powered features such as enhanced documentation answers. Without this key, the application falls back to rule based behavior.
+
+## 3. Initialize the Database
+
+If using SQLite, the database file will be created automatically when the server runs. For PostgreSQL, ensure the database exists before starting the application:
+
+    ```plaintext
+    createdb appdb
+    ```
+
+You may also need to run migrations if schema changes are introduced.
+
+## 4. Running the Application
+
+To start the server:
+
+    ```plaintext
+    python app.py
+    ```
+
+By default, the server listens on:
+
+    ```plaintext
+    [http://localhost:5000](http://localhost:5000)
+    ```
+
+Once the server is running, you can test basic functionality by visiting the API endpoints or using a tool like curl or Postman.
+
+## 5. Using the Docs Assistant (DocuBot)
+
+If you have set `GEMINI_API_KEY`, you can run the documentation assistant:
+
+    ```plaintext
+    python main.py
+    ```
+
+This tool supports multiple modes including:
+
+- naive LLM generation  
+- retrieval only  
+- full RAG (retrieval plus generation)
+
+Each mode helps you explore different system behaviors.
+
+## 6. Troubleshooting
+
+- If authentication fails, confirm that `AUTH_SECRET_KEY` is set.  
+- If database queries return errors, verify the `DATABASE_URL` format.  
+- If LLM features do not work, ensure that `GEMINI_API_KEY` is defined in the environment.  
+- If installation fails, check that you are using a compatible Python version.
+
+## 7. Resetting the Environment
+
+To reset the local database (SQLite only):
+
+    ```plaintext
+    rm app.db
+    ```
+
+Then rerun the setup steps above.
+
+
+---
+[AUTH.md]
+# Authentication Guide
+
+This document explains how authentication works in the sample application. It covers token generation, required environment variables, and the expected client workflow.
+
+## Overview
+
+The application uses a simple token based system. Every request to a protected endpoint must include a valid access token in the Authorization header. Tokens are short lived and tied to a single user.
+
+## Token Generation
+
+Tokens are created by the `generate_access_token` function in the `auth_utils.py` module. The function takes a user ID and returns a signed JSON Web Token string.
+
+Internally, the token is signed using the secret stored in the `AUTH_SECRET_KEY` environment variable. If the key is missing or empty, token creation will fail.
+
+The token payload includes:
+
+- `user_id`
+- `issued_at`
+- `expires_at`
+- `permissions` (optional)
+
+## Validating Requests
+
+Requests are validated by the `require_auth` decorator. This decorator ensures that:
+
+1. A token is present in the Authorization header  
+2. The token signature is valid  
+3. The token has not expired  
+4. The user has permission to access the requested resource  
+
+If validation fails, the client receives a 401 Unauthorized response.
+
+## Environment Variables
+
+The authentication system depends on two variables:
+
+- `AUTH_SECRET_KEY`  
+  A secret string used to sign all access tokens. Must be long and unpredictable.
+
+- `TOKEN_LIFETIME_SECONDS`  
+  Controls how long a generated token remains valid. Defaults to 3600 seconds if not set.
+
+Both variables must be configured before starting the server.
+
+## Client Workflow
+
+A typical client follows this sequence:
+
+1. Send credentials to `/api/login`
+2. Receive an access token in the response
+3. Include the token in the Authorization header for all subsequent requests:
+
+    ```plaintext
+    Authorization: Bearer <token>
+    ```
+
+4. Refresh the token when it expires by calling `/api/refresh`
+
+Clients should never store tokens in URL query parameters.
+
+## Common Failure Cases
+
+- Token signed with a stale or rotated key  
+- Clock skew causing premature expiration  
+- Missing Authorization header  
+- Incorrect token format (extra whitespace or missing Bearer prefix)
+
+If unexpected authentication failures occur, rotate the secret key and instruct users to log in again.
+
+
+---
+[DATABASE.md]
+# Database Guide
+
+This document describes the database layer used in the sample application. It covers connection details, table structures, and common query patterns that appear throughout the codebase.
+
+## Overview
+
+The application uses a lightweight SQLite database for local development. In production environments, it can be configured to use PostgreSQL by providing the correct connection string.
+
+All database interactions are handled through the `db.py` module, which provides helper functions for connecting, executing queries, and mapping results into Python objects.
+
+## Connection Configuration
+
+The database connection is determined by the `DATABASE_URL` environment variable.
+
+Examples:
+
+- SQLite (default):
+
+    ```plaintext
+    sqlite:///app.db
+    ```
+
+- PostgreSQL:
+
+    ```plaintext
+    postgres://user:password@localhost:5432/appdb
+    ```
+
+If `DATABASE_URL` is not provided, the application creates a local SQLite database file named `app.db`.
+
+## Tables
+
+### users
+
+Stores basic account information.
+
+| Column       | Type      | Description                         |
+|--------------|-----------|-------------------------------------|
+| user_id      | INTEGER   | Primary key                         |
+| email        | TEXT      | Unique email address                |
+| password_hash| TEXT      | Hashed password                     |
+| joined_at    | TEXT      | ISO 8601 timestamp                  |
+
+### projects
+
+Represents projects owned or shared with users.
+
+| Column       | Type      | Description                         |
+|--------------|-----------|-------------------------------------|
+| project_id   | TEXT      | Primary key (string identifier)     |
+| name         | TEXT      | Human readable name                 |
+| description  | TEXT      | Optional longer description         |
+| status       | TEXT      | active, archived, or pending        |
+| owner_id     | INTEGER   | Foreign key referencing users       |
+
+### permissions
+
+Maps users to projects and defines what actions they can take.
+
+| Column     | Type    | Description                             |
+|------------|---------|-----------------------------------------|
+| user_id    | INTEGER | Foreign key                             |
+| project_id | TEXT    | Foreign key                             |
+| role       | TEXT    | admin, editor, or viewer                |
+
+A user listed as admin automatically has full access to the project.
+
+## Query Helpers
+
+The `db.py` module exposes several helpful functions:
+
+- `get_user_by_id(user_id)`  
+Returns a dictionary with user details or None if not found.
+
+- `get_all_users()`  
+Returns a list of all user records.
+
+- `get_projects_for_user(user_id)`  
+Returns all projects where the user has at least viewer access.
+
+- `get_project_details(project_id)`  
+Returns a single project record, including its metadata.
+
+These functions are thin wrappers over SQL queries and intentionally simple to make debugging easier.
+
+## Common Failure Cases
+
+- Missing or invalid `DATABASE_URL`  
+- Incorrect table schema after manual edits  
+- Queries returning empty results due to missing foreign key references  
+- SQLite locking errors when multiple writes happen quickly  
+
+If schema inconsistencies appear, run database migrations again or recreate the local SQLite file.
+
+## Notes for Development
+
+Developers often encounter confusion between SQLite and PostgreSQL behavior. In particular:
+
+- SQLite allows many implicit type conversions  
+- SQLite ignores certain constraint violations that PostgreSQL enforces  
+- Timestamps may appear in different formats across engines  
+
+Always test schema related changes using both database backends when possible.
+
+
+
+============================================================
+Question: How do I connect to the database?
+
+Retrieved snippets:
+[DATABASE.md]
+# Database Guide
+
+This document describes the database layer used in the sample application. It covers connection details, table structures, and common query patterns that appear throughout the codebase.
+
+## Overview
+
+The application uses a lightweight SQLite database for local development. In production environments, it can be configured to use PostgreSQL by providing the correct connection string.
+
+All database interactions are handled through the `db.py` module, which provides helper functions for connecting, executing queries, and mapping results into Python objects.
+
+## Connection Configuration
+
+The database connection is determined by the `DATABASE_URL` environment variable.
+
+Examples:
+
+- SQLite (default):
+
+    ```plaintext
+    sqlite:///app.db
+    ```
+
+- PostgreSQL:
+
+    ```plaintext
+    postgres://user:password@localhost:5432/appdb
+    ```
+
+If `DATABASE_URL` is not provided, the application creates a local SQLite database file named `app.db`.
+
+## Tables
+
+### users
+
+Stores basic account information.
+
+| Column       | Type      | Description                         |
+|--------------|-----------|-------------------------------------|
+| user_id      | INTEGER   | Primary key                         |
+| email        | TEXT      | Unique email address                |
+| password_hash| TEXT      | Hashed password                     |
+| joined_at    | TEXT      | ISO 8601 timestamp                  |
+
+### projects
+
+Represents projects owned or shared with users.
+
+| Column       | Type      | Description                         |
+|--------------|-----------|-------------------------------------|
+| project_id   | TEXT      | Primary key (string identifier)     |
+| name         | TEXT      | Human readable name                 |
+| description  | TEXT      | Optional longer description         |
+| status       | TEXT      | active, archived, or pending        |
+| owner_id     | INTEGER   | Foreign key referencing users       |
+
+### permissions
+
+Maps users to projects and defines what actions they can take.
+
+| Column     | Type    | Description                             |
+|------------|---------|-----------------------------------------|
+| user_id    | INTEGER | Foreign key                             |
+| project_id | TEXT    | Foreign key                             |
+| role       | TEXT    | admin, editor, or viewer                |
+
+A user listed as admin automatically has full access to the project.
+
+## Query Helpers
+
+The `db.py` module exposes several helpful functions:
+
+- `get_user_by_id(user_id)`  
+Returns a dictionary with user details or None if not found.
+
+- `get_all_users()`  
+Returns a list of all user records.
+
+- `get_projects_for_user(user_id)`  
+Returns all projects where the user has at least viewer access.
+
+- `get_project_details(project_id)`  
+Returns a single project record, including its metadata.
+
+These functions are thin wrappers over SQL queries and intentionally simple to make debugging easier.
+
+## Common Failure Cases
+
+- Missing or invalid `DATABASE_URL`  
+- Incorrect table schema after manual edits  
+- Queries returning empty results due to missing foreign key references  
+- SQLite locking errors when multiple writes happen quickly  
+
+If schema inconsistencies appear, run database migrations again or recreate the local SQLite file.
+
+## Notes for Development
+
+Developers often encounter confusion between SQLite and PostgreSQL behavior. In particular:
+
+- SQLite allows many implicit type conversions  
+- SQLite ignores certain constraint violations that PostgreSQL enforces  
+- Timestamps may appear in different formats across engines  
+
+Always test schema related changes using both database backends when possible.
+
+
+---
+[SETUP.md]
+# Setup Guide
+
+This document explains how to install, configure, and run the sample application. Follow these steps to prepare your environment, set required variables, and verify that everything is working correctly.
+
+## Requirements
+
+- Python 3.9 or later  
+- pip installed  
+- A terminal or command prompt  
+- Optional: a valid Gemini API key for LLM based features
+
+## 1. Install Dependencies
+
+From the project root, install dependencies using pip:
+
+    ```bash
+    pip install -r requirements.txt
+    ```
+
+This installs all required libraries, including the database driver and LLM client.
+
+## 2. Environment Variables
+
+Create a `.env` file or export the following variables directly in your shell.
+
+### Required Variables
+
+- `DATABASE_URL`  
+  Specifies where the application stores data. If omitted, the app uses a local SQLite database file.
+
+  Example:
+
+      ```plaintext
+      DATABASE_URL=sqlite:///app.db
+      ```
+
+- `AUTH_SECRET_KEY`  
+Used to sign authentication tokens. Must be a non empty string.
+
+    Example:
+
+        ```plaintext
+        AUTH_SECRET_KEY="supersecretvalue"
+        ```
+
+### Optional Variables
+
+- `TOKEN_LIFETIME_SECONDS`  
+Controls how long access tokens remain valid.
+
+- `GEMINI_API_KEY`  
+Enables LLM powered features such as enhanced documentation answers. Without this key, the application falls back to rule based behavior.
+
+## 3. Initialize the Database
+
+If using SQLite, the database file will be created automatically when the server runs. For PostgreSQL, ensure the database exists before starting the application:
+
+    ```plaintext
+    createdb appdb
+    ```
+
+You may also need to run migrations if schema changes are introduced.
+
+## 4. Running the Application
+
+To start the server:
+
+    ```plaintext
+    python app.py
+    ```
+
+By default, the server listens on:
+
+    ```plaintext
+    [http://localhost:5000](http://localhost:5000)
+    ```
+
+Once the server is running, you can test basic functionality by visiting the API endpoints or using a tool like curl or Postman.
+
+## 5. Using the Docs Assistant (DocuBot)
+
+If you have set `GEMINI_API_KEY`, you can run the documentation assistant:
+
+    ```plaintext
+    python main.py
+    ```
+
+This tool supports multiple modes including:
+
+- naive LLM generation  
+- retrieval only  
+- full RAG (retrieval plus generation)
+
+Each mode helps you explore different system behaviors.
+
+## 6. Troubleshooting
+
+- If authentication fails, confirm that `AUTH_SECRET_KEY` is set.  
+- If database queries return errors, verify the `DATABASE_URL` format.  
+- If LLM features do not work, ensure that `GEMINI_API_KEY` is defined in the environment.  
+- If installation fails, check that you are using a compatible Python version.
+
+## 7. Resetting the Environment
+
+To reset the local database (SQLite only):
+
+    ```plaintext
+    rm app.db
+    ```
+
+Then rerun the setup steps above.
+
+
+
+============================================================
+Question: Which endpoint lists all users?
+
+Retrieved snippets:
+[API_REFERENCE.md]
+# API Reference
+
+This document lists the main API endpoints available in the sample application. It describes each route's purpose, required parameters, and expected responses. All protected endpoints require a valid access token.
+
+## Base URL
+
+    ```plaintext
+    /api
+    ````
+
+## Authentication Endpoints
+
+### POST /api/login
+
+Authenticates a user and returns a short lived access token.
+
+Request Body:
+
+    ```json
+    {
+    "username": "example",
+    "password": "secret"
+    }
+    ````
+
+Successful Response:
+
+    ```json
+    {
+    "access_token": "<token>"
+    }
+    ```
+
+Notes:
+
+* Returns 401 if credentials are invalid.
+* The token must be included in the Authorization header for protected endpoints.
+
+### POST /api/refresh
+
+Exchanges an existing valid token for a new one with an updated expiration time.
+
+Headers:
+
+    ```plaintext
+    Authorization: Bearer <token>
+    ```
+
+Response:
+
+    ```json
+    {
+    "access_token": "<new_token>"
+    }
+    ```
+
+## User Data Endpoints
+
+### GET /api/users/<user_id>
+
+Fetches profile data for a specific user.
+
+Headers:
+
+    ```plaintext
+    Authorization: Bearer <token>
+    ```
+
+Response Example:
+
+    ```json
+    {
+    "user_id": 42,
+    "email": "user@example.com",
+    "joined_at": "2024-01-15T10:22:00Z"
+    }
+    ```
+
+Failure Cases:
+
+* 401 if the token is missing or expired
+* 403 if the user lacks permission to view this profile
+* 404 if no user exists with the given ID
+
+### GET /api/users
+
+Returns a list of all users. Only accessible to admins.
+
+Headers:
+
+    ```plaintext
+    Authorization: Bearer <token>
+    ```
+
+Successful Response:
+
+    ```json
+    [
+    {
+        "user_id": 1,
+        "email": "admin@example.com"
+    },
+    {
+        "user_id": 2,
+        "email": "guest@example.com"
+    }
+    ]
+    ```
+
+Notes:
+
+* Returns 403 for non admin accounts.
+
+## Project Data Endpoints
+
+### GET /api/projects
+
+Returns all projects visible to the calling user.
+
+Headers:
+
+    ```plaintext
+    Authorization: Bearer <token>
+    ```
+
+Response Example:
+
+    ```json
+    [
+    {
+        "project_id": "alpha",
+        "name": "Alpha Project",
+        "status": "active"
+    }
+    ]
+    ```
+
+### GET /api/projects/<project_id>
+
+Fetches detailed information for a single project.
+
+Headers:
+
+    ```plaintext
+    Authorization: Bearer <token>
+    ```
+
+Response Example:
+
+    ```json
+    {
+    "project_id": "alpha",
+    "name": "Alpha Project",
+    "description": "Internal research initiative.",
+    "status": "active",
+    "owner": 1
+    }
+    ```
+
+Failure Cases:
+
+* 401 for missing token
+* 403 if caller cannot access the project
+* 404 if the project does not exist
+
+## Error Formats
+
+All error responses follow this structure:
+
+    ```json
+    {
+    "error": "Description of the problem"
+    }
+    ```
+
+Common error messages include:
+
+* "Unauthorized"
+* "Forbidden"
+* "Not Found"
+* "Invalid Request"
+
+
+---
+[DATABASE.md]
+# Database Guide
+
+This document describes the database layer used in the sample application. It covers connection details, table structures, and common query patterns that appear throughout the codebase.
+
+## Overview
+
+The application uses a lightweight SQLite database for local development. In production environments, it can be configured to use PostgreSQL by providing the correct connection string.
+
+All database interactions are handled through the `db.py` module, which provides helper functions for connecting, executing queries, and mapping results into Python objects.
+
+## Connection Configuration
+
+The database connection is determined by the `DATABASE_URL` environment variable.
+
+Examples:
+
+- SQLite (default):
+
+    ```plaintext
+    sqlite:///app.db
+    ```
+
+- PostgreSQL:
+
+    ```plaintext
+    postgres://user:password@localhost:5432/appdb
+    ```
+
+If `DATABASE_URL` is not provided, the application creates a local SQLite database file named `app.db`.
+
+## Tables
+
+### users
+
+Stores basic account information.
+
+| Column       | Type      | Description                         |
+|--------------|-----------|-------------------------------------|
+| user_id      | INTEGER   | Primary key                         |
+| email        | TEXT      | Unique email address                |
+| password_hash| TEXT      | Hashed password                     |
+| joined_at    | TEXT      | ISO 8601 timestamp                  |
+
+### projects
+
+Represents projects owned or shared with users.
+
+| Column       | Type      | Description                         |
+|--------------|-----------|-------------------------------------|
+| project_id   | TEXT      | Primary key (string identifier)     |
+| name         | TEXT      | Human readable name                 |
+| description  | TEXT      | Optional longer description         |
+| status       | TEXT      | active, archived, or pending        |
+| owner_id     | INTEGER   | Foreign key referencing users       |
+
+### permissions
+
+Maps users to projects and defines what actions they can take.
+
+| Column     | Type    | Description                             |
+|------------|---------|-----------------------------------------|
+| user_id    | INTEGER | Foreign key                             |
+| project_id | TEXT    | Foreign key                             |
+| role       | TEXT    | admin, editor, or viewer                |
+
+A user listed as admin automatically has full access to the project.
+
+## Query Helpers
+
+The `db.py` module exposes several helpful functions:
+
+- `get_user_by_id(user_id)`  
+Returns a dictionary with user details or None if not found.
+
+- `get_all_users()`  
+Returns a list of all user records.
+
+- `get_projects_for_user(user_id)`  
+Returns all projects where the user has at least viewer access.
+
+- `get_project_details(project_id)`  
+Returns a single project record, including its metadata.
+
+These functions are thin wrappers over SQL queries and intentionally simple to make debugging easier.
+
+## Common Failure Cases
+
+- Missing or invalid `DATABASE_URL`  
+- Incorrect table schema after manual edits  
+- Queries returning empty results due to missing foreign key references  
+- SQLite locking errors when multiple writes happen quickly  
+
+If schema inconsistencies appear, run database migrations again or recreate the local SQLite file.
+
+## Notes for Development
+
+Developers often encounter confusion between SQLite and PostgreSQL behavior. In particular:
+
+- SQLite allows many implicit type conversions  
+- SQLite ignores certain constraint violations that PostgreSQL enforces  
+- Timestamps may appear in different formats across engines  
+
+Always test schema related changes using both database backends when possible.
+
+
+---
+[AUTH.md]
+# Authentication Guide
+
+This document explains how authentication works in the sample application. It covers token generation, required environment variables, and the expected client workflow.
+
+## Overview
+
+The application uses a simple token based system. Every request to a protected endpoint must include a valid access token in the Authorization header. Tokens are short lived and tied to a single user.
+
+## Token Generation
+
+Tokens are created by the `generate_access_token` function in the `auth_utils.py` module. The function takes a user ID and returns a signed JSON Web Token string.
+
+Internally, the token is signed using the secret stored in the `AUTH_SECRET_KEY` environment variable. If the key is missing or empty, token creation will fail.
+
+The token payload includes:
+
+- `user_id`
+- `issued_at`
+- `expires_at`
+- `permissions` (optional)
+
+## Validating Requests
+
+Requests are validated by the `require_auth` decorator. This decorator ensures that:
+
+1. A token is present in the Authorization header  
+2. The token signature is valid  
+3. The token has not expired  
+4. The user has permission to access the requested resource  
+
+If validation fails, the client receives a 401 Unauthorized response.
+
+## Environment Variables
+
+The authentication system depends on two variables:
+
+- `AUTH_SECRET_KEY`  
+  A secret string used to sign all access tokens. Must be long and unpredictable.
+
+- `TOKEN_LIFETIME_SECONDS`  
+  Controls how long a generated token remains valid. Defaults to 3600 seconds if not set.
+
+Both variables must be configured before starting the server.
+
+## Client Workflow
+
+A typical client follows this sequence:
+
+1. Send credentials to `/api/login`
+2. Receive an access token in the response
+3. Include the token in the Authorization header for all subsequent requests:
+
+    ```plaintext
+    Authorization: Bearer <token>
+    ```
+
+4. Refresh the token when it expires by calling `/api/refresh`
+
+Clients should never store tokens in URL query parameters.
+
+## Common Failure Cases
+
+- Token signed with a stale or rotated key  
+- Clock skew causing premature expiration  
+- Missing Authorization header  
+- Incorrect token format (extra whitespace or missing Bearer prefix)
+
+If unexpected authentication failures occur, rotate the secret key and instruct users to log in again.
+
+
+
+============================================================
+Question: What does the /api/projects/<project_id> route return?
+
+Retrieved snippets:
+[API_REFERENCE.md]
+# API Reference
+
+This document lists the main API endpoints available in the sample application. It describes each route's purpose, required parameters, and expected responses. All protected endpoints require a valid access token.
+
+## Base URL
+
+    ```plaintext
+    /api
+    ````
+
+## Authentication Endpoints
+
+### POST /api/login
+
+Authenticates a user and returns a short lived access token.
+
+Request Body:
+
+    ```json
+    {
+    "username": "example",
+    "password": "secret"
+    }
+    ````
+
+Successful Response:
+
+    ```json
+    {
+    "access_token": "<token>"
+    }
+    ```
+
+Notes:
+
+* Returns 401 if credentials are invalid.
+* The token must be included in the Authorization header for protected endpoints.
+
+### POST /api/refresh
+
+Exchanges an existing valid token for a new one with an updated expiration time.
+
+Headers:
+
+    ```plaintext
+    Authorization: Bearer <token>
+    ```
+
+Response:
+
+    ```json
+    {
+    "access_token": "<new_token>"
+    }
+    ```
+
+## User Data Endpoints
+
+### GET /api/users/<user_id>
+
+Fetches profile data for a specific user.
+
+Headers:
+
+    ```plaintext
+    Authorization: Bearer <token>
+    ```
+
+Response Example:
+
+    ```json
+    {
+    "user_id": 42,
+    "email": "user@example.com",
+    "joined_at": "2024-01-15T10:22:00Z"
+    }
+    ```
+
+Failure Cases:
+
+* 401 if the token is missing or expired
+* 403 if the user lacks permission to view this profile
+* 404 if no user exists with the given ID
+
+### GET /api/users
+
+Returns a list of all users. Only accessible to admins.
+
+Headers:
+
+    ```plaintext
+    Authorization: Bearer <token>
+    ```
+
+Successful Response:
+
+    ```json
+    [
+    {
+        "user_id": 1,
+        "email": "admin@example.com"
+    },
+    {
+        "user_id": 2,
+        "email": "guest@example.com"
+    }
+    ]
+    ```
+
+Notes:
+
+* Returns 403 for non admin accounts.
+
+## Project Data Endpoints
+
+### GET /api/projects
+
+Returns all projects visible to the calling user.
+
+Headers:
+
+    ```plaintext
+    Authorization: Bearer <token>
+    ```
+
+Response Example:
+
+    ```json
+    [
+    {
+        "project_id": "alpha",
+        "name": "Alpha Project",
+        "status": "active"
+    }
+    ]
+    ```
+
+### GET /api/projects/<project_id>
+
+Fetches detailed information for a single project.
+
+Headers:
+
+    ```plaintext
+    Authorization: Bearer <token>
+    ```
+
+Response Example:
+
+    ```json
+    {
+    "project_id": "alpha",
+    "name": "Alpha Project",
+    "description": "Internal research initiative.",
+    "status": "active",
+    "owner": 1
+    }
+    ```
+
+Failure Cases:
+
+* 401 for missing token
+* 403 if caller cannot access the project
+* 404 if the project does not exist
+
+## Error Formats
+
+All error responses follow this structure:
+
+    ```json
+    {
+    "error": "Description of the problem"
+    }
+    ```
+
+Common error messages include:
+
+* "Unauthorized"
+* "Forbidden"
+* "Not Found"
+* "Invalid Request"
+
+
+---
+[DATABASE.md]
+# Database Guide
+
+This document describes the database layer used in the sample application. It covers connection details, table structures, and common query patterns that appear throughout the codebase.
+
+## Overview
+
+The application uses a lightweight SQLite database for local development. In production environments, it can be configured to use PostgreSQL by providing the correct connection string.
+
+All database interactions are handled through the `db.py` module, which provides helper functions for connecting, executing queries, and mapping results into Python objects.
+
+## Connection Configuration
+
+The database connection is determined by the `DATABASE_URL` environment variable.
+
+Examples:
+
+- SQLite (default):
+
+    ```plaintext
+    sqlite:///app.db
+    ```
+
+- PostgreSQL:
+
+    ```plaintext
+    postgres://user:password@localhost:5432/appdb
+    ```
+
+If `DATABASE_URL` is not provided, the application creates a local SQLite database file named `app.db`.
+
+## Tables
+
+### users
+
+Stores basic account information.
+
+| Column       | Type      | Description                         |
+|--------------|-----------|-------------------------------------|
+| user_id      | INTEGER   | Primary key                         |
+| email        | TEXT      | Unique email address                |
+| password_hash| TEXT      | Hashed password                     |
+| joined_at    | TEXT      | ISO 8601 timestamp                  |
+
+### projects
+
+Represents projects owned or shared with users.
+
+| Column       | Type      | Description                         |
+|--------------|-----------|-------------------------------------|
+| project_id   | TEXT      | Primary key (string identifier)     |
+| name         | TEXT      | Human readable name                 |
+| description  | TEXT      | Optional longer description         |
+| status       | TEXT      | active, archived, or pending        |
+| owner_id     | INTEGER   | Foreign key referencing users       |
+
+### permissions
+
+Maps users to projects and defines what actions they can take.
+
+| Column     | Type    | Description                             |
+|------------|---------|-----------------------------------------|
+| user_id    | INTEGER | Foreign key                             |
+| project_id | TEXT    | Foreign key                             |
+| role       | TEXT    | admin, editor, or viewer                |
+
+A user listed as admin automatically has full access to the project.
+
+## Query Helpers
+
+The `db.py` module exposes several helpful functions:
+
+- `get_user_by_id(user_id)`  
+Returns a dictionary with user details or None if not found.
+
+- `get_all_users()`  
+Returns a list of all user records.
+
+- `get_projects_for_user(user_id)`  
+Returns all projects where the user has at least viewer access.
+
+- `get_project_details(project_id)`  
+Returns a single project record, including its metadata.
+
+These functions are thin wrappers over SQL queries and intentionally simple to make debugging easier.
+
+## Common Failure Cases
+
+- Missing or invalid `DATABASE_URL`  
+- Incorrect table schema after manual edits  
+- Queries returning empty results due to missing foreign key references  
+- SQLite locking errors when multiple writes happen quickly  
+
+If schema inconsistencies appear, run database migrations again or recreate the local SQLite file.
+
+## Notes for Development
+
+Developers often encounter confusion between SQLite and PostgreSQL behavior. In particular:
+
+- SQLite allows many implicit type conversions  
+- SQLite ignores certain constraint violations that PostgreSQL enforces  
+- Timestamps may appear in different formats across engines  
+
+Always test schema related changes using both database backends when possible.
+
+
+---
+[SETUP.md]
+# Setup Guide
+
+This document explains how to install, configure, and run the sample application. Follow these steps to prepare your environment, set required variables, and verify that everything is working correctly.
+
+## Requirements
+
+- Python 3.9 or later  
+- pip installed  
+- A terminal or command prompt  
+- Optional: a valid Gemini API key for LLM based features
+
+## 1. Install Dependencies
+
+From the project root, install dependencies using pip:
+
+    ```bash
+    pip install -r requirements.txt
+    ```
+
+This installs all required libraries, including the database driver and LLM client.
+
+## 2. Environment Variables
+
+Create a `.env` file or export the following variables directly in your shell.
+
+### Required Variables
+
+- `DATABASE_URL`  
+  Specifies where the application stores data. If omitted, the app uses a local SQLite database file.
+
+  Example:
+
+      ```plaintext
+      DATABASE_URL=sqlite:///app.db
+      ```
+
+- `AUTH_SECRET_KEY`  
+Used to sign authentication tokens. Must be a non empty string.
+
+    Example:
+
+        ```plaintext
+        AUTH_SECRET_KEY="supersecretvalue"
+        ```
+
+### Optional Variables
+
+- `TOKEN_LIFETIME_SECONDS`  
+Controls how long access tokens remain valid.
+
+- `GEMINI_API_KEY`  
+Enables LLM powered features such as enhanced documentation answers. Without this key, the application falls back to rule based behavior.
+
+## 3. Initialize the Database
+
+If using SQLite, the database file will be created automatically when the server runs. For PostgreSQL, ensure the database exists before starting the application:
+
+    ```plaintext
+    createdb appdb
+    ```
+
+You may also need to run migrations if schema changes are introduced.
+
+## 4. Running the Application
+
+To start the server:
+
+    ```plaintext
+    python app.py
+    ```
+
+By default, the server listens on:
+
+    ```plaintext
+    [http://localhost:5000](http://localhost:5000)
+    ```
+
+Once the server is running, you can test basic functionality by visiting the API endpoints or using a tool like curl or Postman.
+
+## 5. Using the Docs Assistant (DocuBot)
+
+If you have set `GEMINI_API_KEY`, you can run the documentation assistant:
+
+    ```plaintext
+    python main.py
+    ```
+
+This tool supports multiple modes including:
+
+- naive LLM generation  
+- retrieval only  
+- full RAG (retrieval plus generation)
+
+Each mode helps you explore different system behaviors.
+
+## 6. Troubleshooting
+
+- If authentication fails, confirm that `AUTH_SECRET_KEY` is set.  
+- If database queries return errors, verify the `DATABASE_URL` format.  
+- If LLM features do not work, ensure that `GEMINI_API_KEY` is defined in the environment.  
+- If installation fails, check that you are using a compatible Python version.
+
+## 7. Resetting the Environment
+
+To reset the local database (SQLite only):
+
+    ```plaintext
+    rm app.db
+    ```
+
+Then rerun the setup steps above.
+
+
+
+============================================================
+Question: Is there any mention of payment processing in these docs?
+
+Retrieved snippets:
+I do not know based on these docs.
+
+============================================================
+Question: How does a client refresh an access token?
+
+Retrieved snippets:
+[AUTH.md]
+# Authentication Guide
+
+This document explains how authentication works in the sample application. It covers token generation, required environment variables, and the expected client workflow.
+
+## Overview
+
+The application uses a simple token based system. Every request to a protected endpoint must include a valid access token in the Authorization header. Tokens are short lived and tied to a single user.
+
+## Token Generation
+
+Tokens are created by the `generate_access_token` function in the `auth_utils.py` module. The function takes a user ID and returns a signed JSON Web Token string.
+
+Internally, the token is signed using the secret stored in the `AUTH_SECRET_KEY` environment variable. If the key is missing or empty, token creation will fail.
+
+The token payload includes:
+
+- `user_id`
+- `issued_at`
+- `expires_at`
+- `permissions` (optional)
+
+## Validating Requests
+
+Requests are validated by the `require_auth` decorator. This decorator ensures that:
+
+1. A token is present in the Authorization header  
+2. The token signature is valid  
+3. The token has not expired  
+4. The user has permission to access the requested resource  
+
+If validation fails, the client receives a 401 Unauthorized response.
+
+## Environment Variables
+
+The authentication system depends on two variables:
+
+- `AUTH_SECRET_KEY`  
+  A secret string used to sign all access tokens. Must be long and unpredictable.
+
+- `TOKEN_LIFETIME_SECONDS`  
+  Controls how long a generated token remains valid. Defaults to 3600 seconds if not set.
+
+Both variables must be configured before starting the server.
+
+## Client Workflow
+
+A typical client follows this sequence:
+
+1. Send credentials to `/api/login`
+2. Receive an access token in the response
+3. Include the token in the Authorization header for all subsequent requests:
+
+    ```plaintext
+    Authorization: Bearer <token>
+    ```
+
+4. Refresh the token when it expires by calling `/api/refresh`
+
+Clients should never store tokens in URL query parameters.
+
+## Common Failure Cases
+
+- Token signed with a stale or rotated key  
+- Clock skew causing premature expiration  
+- Missing Authorization header  
+- Incorrect token format (extra whitespace or missing Bearer prefix)
+
+If unexpected authentication failures occur, rotate the secret key and instruct users to log in again.
+
+
+---
+[API_REFERENCE.md]
+# API Reference
+
+This document lists the main API endpoints available in the sample application. It describes each route's purpose, required parameters, and expected responses. All protected endpoints require a valid access token.
+
+## Base URL
+
+    ```plaintext
+    /api
+    ````
+
+## Authentication Endpoints
+
+### POST /api/login
+
+Authenticates a user and returns a short lived access token.
+
+Request Body:
+
+    ```json
+    {
+    "username": "example",
+    "password": "secret"
+    }
+    ````
+
+Successful Response:
+
+    ```json
+    {
+    "access_token": "<token>"
+    }
+    ```
+
+Notes:
+
+* Returns 401 if credentials are invalid.
+* The token must be included in the Authorization header for protected endpoints.
+
+### POST /api/refresh
+
+Exchanges an existing valid token for a new one with an updated expiration time.
+
+Headers:
+
+    ```plaintext
+    Authorization: Bearer <token>
+    ```
+
+Response:
+
+    ```json
+    {
+    "access_token": "<new_token>"
+    }
+    ```
+
+## User Data Endpoints
+
+### GET /api/users/<user_id>
+
+Fetches profile data for a specific user.
+
+Headers:
+
+    ```plaintext
+    Authorization: Bearer <token>
+    ```
+
+Response Example:
+
+    ```json
+    {
+    "user_id": 42,
+    "email": "user@example.com",
+    "joined_at": "2024-01-15T10:22:00Z"
+    }
+    ```
+
+Failure Cases:
+
+* 401 if the token is missing or expired
+* 403 if the user lacks permission to view this profile
+* 404 if no user exists with the given ID
+
+### GET /api/users
+
+Returns a list of all users. Only accessible to admins.
+
+Headers:
+
+    ```plaintext
+    Authorization: Bearer <token>
+    ```
+
+Successful Response:
+
+    ```json
+    [
+    {
+        "user_id": 1,
+        "email": "admin@example.com"
+    },
+    {
+        "user_id": 2,
+        "email": "guest@example.com"
+    }
+    ]
+    ```
+
+Notes:
+
+* Returns 403 for non admin accounts.
+
+## Project Data Endpoints
+
+### GET /api/projects
+
+Returns all projects visible to the calling user.
+
+Headers:
+
+    ```plaintext
+    Authorization: Bearer <token>
+    ```
+
+Response Example:
+
+    ```json
+    [
+    {
+        "project_id": "alpha",
+        "name": "Alpha Project",
+        "status": "active"
+    }
+    ]
+    ```
+
+### GET /api/projects/<project_id>
+
+Fetches detailed information for a single project.
+
+Headers:
+
+    ```plaintext
+    Authorization: Bearer <token>
+    ```
+
+Response Example:
+
+    ```json
+    {
+    "project_id": "alpha",
+    "name": "Alpha Project",
+    "description": "Internal research initiative.",
+    "status": "active",
+    "owner": 1
+    }
+    ```
+
+Failure Cases:
+
+* 401 for missing token
+* 403 if caller cannot access the project
+* 404 if the project does not exist
+
+## Error Formats
+
+All error responses follow this structure:
+
+    ```json
+    {
+    "error": "Description of the problem"
+    }
+    ```
+
+Common error messages include:
+
+* "Unauthorized"
+* "Forbidden"
+* "Not Found"
+* "Invalid Request"
+
+
+---
+[SETUP.md]
+# Setup Guide
+
+This document explains how to install, configure, and run the sample application. Follow these steps to prepare your environment, set required variables, and verify that everything is working correctly.
+
+## Requirements
+
+- Python 3.9 or later  
+- pip installed  
+- A terminal or command prompt  
+- Optional: a valid Gemini API key for LLM based features
+
+## 1. Install Dependencies
+
+From the project root, install dependencies using pip:
+
+    ```bash
+    pip install -r requirements.txt
+    ```
+
+This installs all required libraries, including the database driver and LLM client.
+
+## 2. Environment Variables
+
+Create a `.env` file or export the following variables directly in your shell.
+
+### Required Variables
+
+- `DATABASE_URL`  
+  Specifies where the application stores data. If omitted, the app uses a local SQLite database file.
+
+  Example:
+
+      ```plaintext
+      DATABASE_URL=sqlite:///app.db
+      ```
+
+- `AUTH_SECRET_KEY`  
+Used to sign authentication tokens. Must be a non empty string.
+
+    Example:
+
+        ```plaintext
+        AUTH_SECRET_KEY="supersecretvalue"
+        ```
+
+### Optional Variables
+
+- `TOKEN_LIFETIME_SECONDS`  
+Controls how long access tokens remain valid.
+
+- `GEMINI_API_KEY`  
+Enables LLM powered features such as enhanced documentation answers. Without this key, the application falls back to rule based behavior.
+
+## 3. Initialize the Database
+
+If using SQLite, the database file will be created automatically when the server runs. For PostgreSQL, ensure the database exists before starting the application:
+
+    ```plaintext
+    createdb appdb
+    ```
+
+You may also need to run migrations if schema changes are introduced.
+
+## 4. Running the Application
+
+To start the server:
+
+    ```plaintext
+    python app.py
+    ```
+
+By default, the server listens on:
+
+    ```plaintext
+    [http://localhost:5000](http://localhost:5000)
+    ```
+
+Once the server is running, you can test basic functionality by visiting the API endpoints or using a tool like curl or Postman.
+
+## 5. Using the Docs Assistant (DocuBot)
+
+If you have set `GEMINI_API_KEY`, you can run the documentation assistant:
+
+    ```plaintext
+    python main.py
+    ```
+
+This tool supports multiple modes including:
+
+- naive LLM generation  
+- retrieval only  
+- full RAG (retrieval plus generation)
+
+Each mode helps you explore different system behaviors.
+
+## 6. Troubleshooting
+
+- If authentication fails, confirm that `AUTH_SECRET_KEY` is set.  
+- If database queries return errors, verify the `DATABASE_URL` format.  
+- If LLM features do not work, ensure that `GEMINI_API_KEY` is defined in the environment.  
+- If installation fails, check that you are using a compatible Python version.
+
+## 7. Resetting the Environment
+
+To reset the local database (SQLite only):
+
+    ```plaintext
+    rm app.db
+    ```
+
+Then rerun the setup steps above.
+
+
+
+============================================================
+Question: Which fields are stored in the users table?
+
+Retrieved snippets:
+[DATABASE.md]
+# Database Guide
+
+This document describes the database layer used in the sample application. It covers connection details, table structures, and common query patterns that appear throughout the codebase.
+
+## Overview
+
+The application uses a lightweight SQLite database for local development. In production environments, it can be configured to use PostgreSQL by providing the correct connection string.
+
+All database interactions are handled through the `db.py` module, which provides helper functions for connecting, executing queries, and mapping results into Python objects.
+
+## Connection Configuration
+
+The database connection is determined by the `DATABASE_URL` environment variable.
+
+Examples:
+
+- SQLite (default):
+
+    ```plaintext
+    sqlite:///app.db
+    ```
+
+- PostgreSQL:
+
+    ```plaintext
+    postgres://user:password@localhost:5432/appdb
+    ```
+
+If `DATABASE_URL` is not provided, the application creates a local SQLite database file named `app.db`.
+
+## Tables
+
+### users
+
+Stores basic account information.
+
+| Column       | Type      | Description                         |
+|--------------|-----------|-------------------------------------|
+| user_id      | INTEGER   | Primary key                         |
+| email        | TEXT      | Unique email address                |
+| password_hash| TEXT      | Hashed password                     |
+| joined_at    | TEXT      | ISO 8601 timestamp                  |
+
+### projects
+
+Represents projects owned or shared with users.
+
+| Column       | Type      | Description                         |
+|--------------|-----------|-------------------------------------|
+| project_id   | TEXT      | Primary key (string identifier)     |
+| name         | TEXT      | Human readable name                 |
+| description  | TEXT      | Optional longer description         |
+| status       | TEXT      | active, archived, or pending        |
+| owner_id     | INTEGER   | Foreign key referencing users       |
+
+### permissions
+
+Maps users to projects and defines what actions they can take.
+
+| Column     | Type    | Description                             |
+|------------|---------|-----------------------------------------|
+| user_id    | INTEGER | Foreign key                             |
+| project_id | TEXT    | Foreign key                             |
+| role       | TEXT    | admin, editor, or viewer                |
+
+A user listed as admin automatically has full access to the project.
+
+## Query Helpers
+
+The `db.py` module exposes several helpful functions:
+
+- `get_user_by_id(user_id)`  
+Returns a dictionary with user details or None if not found.
+
+- `get_all_users()`  
+Returns a list of all user records.
+
+- `get_projects_for_user(user_id)`  
+Returns all projects where the user has at least viewer access.
+
+- `get_project_details(project_id)`  
+Returns a single project record, including its metadata.
+
+These functions are thin wrappers over SQL queries and intentionally simple to make debugging easier.
+
+## Common Failure Cases
+
+- Missing or invalid `DATABASE_URL`  
+- Incorrect table schema after manual edits  
+- Queries returning empty results due to missing foreign key references  
+- SQLite locking errors when multiple writes happen quickly  
+
+If schema inconsistencies appear, run database migrations again or recreate the local SQLite file.
+
+## Notes for Development
+
+Developers often encounter confusion between SQLite and PostgreSQL behavior. In particular:
+
+- SQLite allows many implicit type conversions  
+- SQLite ignores certain constraint violations that PostgreSQL enforces  
+- Timestamps may appear in different formats across engines  
+
+Always test schema related changes using both database backends when possible.
+
+
+---
+[API_REFERENCE.md]
+# API Reference
+
+This document lists the main API endpoints available in the sample application. It describes each route's purpose, required parameters, and expected responses. All protected endpoints require a valid access token.
+
+## Base URL
+
+    ```plaintext
+    /api
+    ````
+
+## Authentication Endpoints
+
+### POST /api/login
+
+Authenticates a user and returns a short lived access token.
+
+Request Body:
+
+    ```json
+    {
+    "username": "example",
+    "password": "secret"
+    }
+    ````
+
+Successful Response:
+
+    ```json
+    {
+    "access_token": "<token>"
+    }
+    ```
+
+Notes:
+
+* Returns 401 if credentials are invalid.
+* The token must be included in the Authorization header for protected endpoints.
+
+### POST /api/refresh
+
+Exchanges an existing valid token for a new one with an updated expiration time.
+
+Headers:
+
+    ```plaintext
+    Authorization: Bearer <token>
+    ```
+
+Response:
+
+    ```json
+    {
+    "access_token": "<new_token>"
+    }
+    ```
+
+## User Data Endpoints
+
+### GET /api/users/<user_id>
+
+Fetches profile data for a specific user.
+
+Headers:
+
+    ```plaintext
+    Authorization: Bearer <token>
+    ```
+
+Response Example:
+
+    ```json
+    {
+    "user_id": 42,
+    "email": "user@example.com",
+    "joined_at": "2024-01-15T10:22:00Z"
+    }
+    ```
+
+Failure Cases:
+
+* 401 if the token is missing or expired
+* 403 if the user lacks permission to view this profile
+* 404 if no user exists with the given ID
+
+### GET /api/users
+
+Returns a list of all users. Only accessible to admins.
+
+Headers:
+
+    ```plaintext
+    Authorization: Bearer <token>
+    ```
+
+Successful Response:
+
+    ```json
+    [
+    {
+        "user_id": 1,
+        "email": "admin@example.com"
+    },
+    {
+        "user_id": 2,
+        "email": "guest@example.com"
+    }
+    ]
+    ```
+
+Notes:
+
+* Returns 403 for non admin accounts.
+
+## Project Data Endpoints
+
+### GET /api/projects
+
+Returns all projects visible to the calling user.
+
+Headers:
+
+    ```plaintext
+    Authorization: Bearer <token>
+    ```
+
+Response Example:
+
+    ```json
+    [
+    {
+        "project_id": "alpha",
+        "name": "Alpha Project",
+        "status": "active"
+    }
+    ]
+    ```
+
+### GET /api/projects/<project_id>
+
+Fetches detailed information for a single project.
+
+Headers:
+
+    ```plaintext
+    Authorization: Bearer <token>
+    ```
+
+Response Example:
+
+    ```json
+    {
+    "project_id": "alpha",
+    "name": "Alpha Project",
+    "description": "Internal research initiative.",
+    "status": "active",
+    "owner": 1
+    }
+    ```
+
+Failure Cases:
+
+* 401 for missing token
+* 403 if caller cannot access the project
+* 404 if the project does not exist
+
+## Error Formats
+
+All error responses follow this structure:
+
+    ```json
+    {
+    "error": "Description of the problem"
+    }
+    ```
+
+Common error messages include:
+
+* "Unauthorized"
+* "Forbidden"
+* "Not Found"
+* "Invalid Request"
+
+
+---
+[AUTH.md]
+# Authentication Guide
+
+This document explains how authentication works in the sample application. It covers token generation, required environment variables, and the expected client workflow.
+
+## Overview
+
+The application uses a simple token based system. Every request to a protected endpoint must include a valid access token in the Authorization header. Tokens are short lived and tied to a single user.
+
+## Token Generation
+
+Tokens are created by the `generate_access_token` function in the `auth_utils.py` module. The function takes a user ID and returns a signed JSON Web Token string.
+
+Internally, the token is signed using the secret stored in the `AUTH_SECRET_KEY` environment variable. If the key is missing or empty, token creation will fail.
+
+The token payload includes:
+
+- `user_id`
+- `issued_at`
+- `expires_at`
+- `permissions` (optional)
+
+## Validating Requests
+
+Requests are validated by the `require_auth` decorator. This decorator ensures that:
+
+1. A token is present in the Authorization header  
+2. The token signature is valid  
+3. The token has not expired  
+4. The user has permission to access the requested resource  
+
+If validation fails, the client receives a 401 Unauthorized response.
+
+## Environment Variables
+
+The authentication system depends on two variables:
+
+- `AUTH_SECRET_KEY`  
+  A secret string used to sign all access tokens. Must be long and unpredictable.
+
+- `TOKEN_LIFETIME_SECONDS`  
+  Controls how long a generated token remains valid. Defaults to 3600 seconds if not set.
+
+Both variables must be configured before starting the server.
+
+## Client Workflow
+
+A typical client follows this sequence:
+
+1. Send credentials to `/api/login`
+2. Receive an access token in the response
+3. Include the token in the Authorization header for all subsequent requests:
+
+    ```plaintext
+    Authorization: Bearer <token>
+    ```
+
+4. Refresh the token when it expires by calling `/api/refresh`
+
+Clients should never store tokens in URL query parameters.
+
+## Common Failure Cases
+
+- Token signed with a stale or rotated key  
+- Clock skew causing premature expiration  
+- Missing Authorization header  
+- Incorrect token format (extra whitespace or missing Bearer prefix)
+
+If unexpected authentication failures occur, rotate the secret key and instruct users to log in again.
+
+
+
+Choose a mode:
+  1) Naive LLM over full docs (no retrieval)
+  2) Retrieval only (no LLM)
+  3) RAG (retrieval + LLM)
+  q) Quit
+Enter choice: 
+Goodbye.

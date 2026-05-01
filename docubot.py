@@ -9,6 +9,14 @@ Core DocuBot class responsible for:
 
 import os
 import glob
+import re
+
+
+STOPWORDS = {
+    "a", "an", "and", "any", "are", "as", "at", "be", "by", "does", "for",
+    "how", "i", "in", "is", "it", "mention", "of", "on", "or", "the", "there", "these",
+    "this", "to", "what", "where", "which"
+}
 
 class DocuBot:
     def __init__(self, docs_folder="docs", llm_client=None):
@@ -22,8 +30,11 @@ class DocuBot:
         # Load documents into memory
         self.documents = self.load_documents()  # List of (filename, text)
 
+        # Split each document into smaller retrieval units.
+        self.sections = self.load_sections(self.documents)
+
         # Build a retrieval index (implemented in Phase 1)
-        self.index = self.build_index(self.documents)
+        self.index = self.build_index(self.sections)
 
     # -----------------------------------------------------------
     # Document Loading
@@ -44,27 +55,85 @@ class DocuBot:
                 docs.append((filename, text))
         return docs
 
+    def _split_into_sections(self, text):
+        """
+        Splits a document into blank-line separated sections.
+        """
+        sections = []
+        for block in re.split(r"\n\s*\n+", text):
+            section = block.strip()
+            if section:
+                sections.append(section)
+        return sections
+
+    def load_sections(self, documents):
+        """
+        Converts whole documents into smaller labeled sections for retrieval.
+        Returns a list of tuples: (section_label, text)
+        """
+        sections = []
+        for filename, text in documents:
+            for index, section in enumerate(self._split_into_sections(text), start=1):
+                label = f"{filename}::section {index}"
+                sections.append((label, section))
+        return sections
+
     # -----------------------------------------------------------
     # Index Construction (Phase 1)
     # -----------------------------------------------------------
 
-    def build_index(self, documents):
+    def _tokenize(self, text):
+        """
+        Converts text into simple lowercase tokens and removes common stopwords.
+        """
+        tokens = []
+        for token in re.findall(r"[a-z0-9_]+", text.lower()):
+            for part in token.split("_"):
+                if not part:
+                    continue
+
+                normalized = part
+                if normalized.endswith("ing") and len(normalized) > 5:
+                    normalized = normalized[:-3]
+                elif normalized.endswith("ed") and len(normalized) > 4:
+                    normalized = normalized[:-2]
+                    if normalized.endswith("at"):
+                        normalized = normalized + "e"
+                elif normalized.endswith("es") and len(normalized) > 4:
+                    normalized = normalized[:-2]
+                elif normalized.endswith("s") and len(normalized) > 3:
+                    normalized = normalized[:-1]
+
+                if normalized == "doc":
+                    continue
+
+                if normalized not in STOPWORDS:
+                    tokens.append(normalized)
+        return tokens
+
+    def build_index(self, sections):
         """
         TODO (Phase 1):
-        Build a tiny inverted index mapping lowercase words to the documents
+        Build a tiny inverted index mapping lowercase words to the sections
         they appear in.
 
         Example structure:
         {
-            "token": ["AUTH.md", "API_REFERENCE.md"],
-            "database": ["DATABASE.md"]
+            "token": ["AUTH.md::section 2", "API_REFERENCE.md::section 1"],
+            "database": ["DATABASE.md::section 3"]
         }
 
-        Keep this simple: split on whitespace, lowercase tokens,
-        ignore punctuation if needed.
+        Keep this simple: lowercase tokens and ignore punctuation if needed.
         """
         index = {}
-        # TODO: implement simple indexing
+        for section_label, text in sections:
+            for token in self._tokenize(text):
+                if token not in index:
+                    index[token] = []
+
+                if section_label not in index[token]:
+                    index[token].append(section_label)
+
         return index
 
     # -----------------------------------------------------------
@@ -81,19 +150,69 @@ class DocuBot:
         - Count how many appear in the text
         - Return the count as the score
         """
-        # TODO: implement scoring
-        return 0
+        text_token_counts = {}
+        for token in self._tokenize(text):
+            text_token_counts[token] = text_token_counts.get(token, 0) + 1
+
+        score = 0
+        for token in self._tokenize(query):
+            score += text_token_counts.get(token, 0)
+
+        return score
+
+    def _minimum_evidence_score(self, query):
+        """
+        Returns the minimum score needed before we trust a retrieval result.
+        Single-token queries are allowed to match once; longer queries need
+        at least two overlapping tokens.
+        """
+        query_tokens = set(self._tokenize(query))
+        if not query_tokens:
+            return 999
+
+        if len(query_tokens) == 1:
+            return 1
+
+        return 2
 
     def retrieve(self, query, top_k=3):
         """
         TODO (Phase 1):
         Use the index and scoring function to select top_k relevant document snippets.
 
-        Return a list of (filename, text) sorted by score descending.
+        Return a list of (section_label, text) sorted by score descending.
         """
-        results = []
-        # TODO: implement retrieval logic
-        return results[:top_k]
+        if top_k <= 0:
+            return []
+
+        candidate_filenames = set()
+        for token in self._tokenize(query):
+            if token in self.index:
+                candidate_filenames.update(self.index[token])
+
+        if not candidate_filenames:
+            return []
+
+        sections_by_label = {section_label: text for section_label, text in self.sections}
+
+        scored_results = []
+        for section_label in candidate_filenames:
+            text = sections_by_label.get(section_label, "")
+            score = self.score_document(query, text)
+            if score > 0:
+                scored_results.append((score, section_label, text))
+
+        scored_results.sort(key=lambda item: (-item[0], item[1]))
+
+        if not scored_results:
+            return []
+
+        minimum_score = self._minimum_evidence_score(query)
+        top_score = scored_results[0][0]
+        if top_score < minimum_score:
+            return []
+
+        return [(section_label, text) for _, section_label, text in scored_results[:top_k]]
 
     # -----------------------------------------------------------
     # Answering Modes

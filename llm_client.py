@@ -13,7 +13,11 @@ Experiment with:
 """
 
 import os
-import google.generativeai as genai
+import warnings
+
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore", FutureWarning)
+    import google.generativeai as genai
 
 # Central place to update the model name if needed.
 # You can swap this for a different Gemini model in the future.
